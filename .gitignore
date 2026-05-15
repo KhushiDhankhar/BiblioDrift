@@ -11,8 +11,7 @@ mood_analysis/mood_cache.json
 .env.production
 .env.development
 
-# Bruno API Collection - Sensitive files
-bruno/environments/local.bru
+# Sensitive local files
 *.token
 *.secret
 
@@ -22,6 +21,8 @@ secrets/
 
 __pycache__/
 *.pyc
+# Migration compiled files (scripts themselves are tracked)
+backend/migrations/versions/__pycache__/
 
 # Netlify build output
 dist/

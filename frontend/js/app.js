@@ -131,6 +131,96 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
+function clearStoredAuthState() {
+    SafeStorage.remove('bibliodrift_user');
+    SafeStorage.remove('bibliodrift_token');
+    SafeStorage.remove('isLoggedIn');
+}
+
+function parseStoredUser() {
+    const userStr = SafeStorage.get('bibliodrift_user');
+    if (!userStr) return null;
+
+    try {
+        return JSON.parse(userStr);
+    } catch (error) {
+        return null;
+    }
+}
+
+function renderAuthNavigation(authLink, tooltip, isAuthenticated) {
+    if (!authLink) return;
+
+    if (isAuthenticated) {
+        authLink.innerHTML = '<i class="fa-solid fa-user"></i> Profile';
+        authLink.href = 'profile.html';
+        authLink.classList.remove('active');
+        if (tooltip) tooltip.innerHTML = '<i class="fa-solid fa-id-card"></i> View Profile';
+        return;
+    }
+
+    authLink.textContent = 'Sign In';
+    authLink.href = 'auth.html';
+    if (tooltip) tooltip.innerHTML = '<i class="fa-solid fa-key"></i> Access account';
+}
+
+let authSessionPromise = null;
+
+async function verifyStoredAuthSession() {
+    if (authSessionPromise) {
+        return authSessionPromise;
+    }
+
+    authSessionPromise = (async () => {
+        const token = SafeStorage.get('bibliodrift_token');
+        const storedUser = parseStoredUser();
+
+        if (!token) {
+            if (storedUser || SafeStorage.get('isLoggedIn') === 'true') {
+                clearStoredAuthState();
+            }
+            return null;
+        }
+
+        if (token === 'demo-token-12345') {
+            return storedUser;
+        }
+
+        try {
+            const response = await fetch(`${MOOD_API_BASE}/auth/verify`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                if (response.status === 401 || response.status === 422) {
+                    clearStoredAuthState();
+                }
+                return null;
+            }
+
+            const data = await response.json();
+            const verifiedUser = data.user || storedUser;
+
+            if (verifiedUser) {
+                SafeStorage.set('bibliodrift_user', JSON.stringify(verifiedUser));
+            }
+            SafeStorage.set('isLoggedIn', 'true');
+
+            return verifiedUser;
+        } catch (error) {
+            console.warn('Auth verification failed; using cached session state if available.', error);
+            return storedUser;
+        }
+    })();
+
+    return authSessionPromise;
+}
+
+window.verifyStoredAuthSession = verifyStoredAuthSession;
+window.renderAuthNavigation = renderAuthNavigation;
+
 /**
  * Robust Wrapper for Storage (LocalStorage + IndexedDB Fallback)
  * Prevents application data loss and handles browser storage wipes/quotas.
@@ -413,10 +503,10 @@ class BookRenderer {
         const title = volumeInfo.title || "Untitled";
         const authors = volumeInfo.authors ? volumeInfo.authors.join(", ") : "Unknown Author";
         const thumb = volumeInfo.imageLinks ? volumeInfo.imageLinks.thumbnail : 'https://via.placeholder.com/128x196?text=No+Cover';
-        const description = volumeInfo.description ? volumeInfo.description.substring(0, 100) + "..." : "A mysterious tome waiting to be opened.";
+        const originalDescription = volumeInfo.description ? volumeInfo.description.substring(0, 100) + "..." : "A mysterious tome waiting to be opened.";
         const categories = volumeInfo.categories || [];
 
-        const vibe = this.generateVibe(description, categories);
+        const vibe = this.generateVibe(originalDescription, categories);
         const spineColors = ['#5D4037', '#4E342E', '#3E2723', '#2C2420', '#8D6E63'];
         const randomSpine = spineColors[Math.floor(Math.random() * spineColors.length)];
 
@@ -427,24 +517,6 @@ class BookRenderer {
         const flipSound = new Audio('../assets/sounds/page-flip.mp3');
         flipSound.volume = 0.5;
 
-        /**
-         * ============================================================================
-         * SECURE HTML ESCAPING HELPER & XSS PREVENTION
-         * ============================================================================
-         * Problem:
-         * Previously, book title and author data were injected directly into the 
-         * scene.innerHTML without sanitization. If data from the Google Books API 
-         * contained special HTML characters (e.g., <script> tags, <, >), this could 
-         * lead to rendering bugs or Cross-Site Scripting (XSS) vulnerabilities.
-         * 
-         * Fix:
-         * We introduce this `escapeHTML` helper function. It replaces sensitive 
-         * HTML characters with their harmless entity equivalents before injection. 
-         * This strictly forces the browser to treat the dynamic content as text 
-         * rather than executable code or structural markup. This is a crucial 
-         * security measure when constructing HTML strings manually.
-         * ============================================================================
-         */
         const escapeHTML = (str) => {
             if (!str) return "";
             return String(str)
@@ -457,17 +529,13 @@ class BookRenderer {
 
         const safeTitle = escapeHTML(title);
         const safeAuthors = escapeHTML(authors);
-        const safeDescription = escapeHTML(description);
+        const safeOriginalDescription = escapeHTML(originalDescription);
         const safeVibe = escapeHTML(vibe);
         const safeThumb = escapeHTML(thumb.replace('http:', 'https:'));
 
         scene.innerHTML = `
             <div class="book" data-id="${escapeHTML(id)}">
                 <div class="book__face book__face--front">
-                    <!-- 
-                      Using the sanitized title for the 'alt' attribute and 
-                      sanitized URL for 'src' ensures no attribute escape attacks.
-                    -->
                     <img src="${safeThumb}" alt="${safeTitle}">
                 </div>
                 <div class="book__face book__face--spine" style="background: ${randomSpine}"></div>
@@ -476,7 +544,6 @@ class BookRenderer {
                 <div class="book__face book__face--bottom"></div>
                 <div class="book__face book__face--back">
                     <div style="overflow-y: auto; height: 100%; padding-right: 5px; scrollbar-width: thin;">
-                        <!-- Safe data injection using escaped values -->
                         <div style="font-weight: bold; font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-main);">${safeTitle}</div>
                         <div class="handwritten-note" style="margin-bottom: 0.8rem; font-style: italic; color: var(--wood-dark);">${safeVibe}</div>
                         ${bookData.moods && bookData.moods.length > 0 ? `
@@ -484,7 +551,7 @@ class BookRenderer {
                             ${bookData.moods.map(m => `<span style="font-size: 0.6rem; background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 10px;"><i class="fa-solid ${this.getMoodIcon(m)}"></i> ${m}</span>`).join('')}
                         </div>
                         ` : ''}
-                        <div class="book-blurb" style="font-size: 0.8rem; line-height: 1.4; color: var(--text-muted); text-align: justify;">${safeDescription}</div>
+                        <div class="book-blurb" data-book-id="${escapeHTML(id)}" style="font-size: 0.8rem; line-height: 1.4; color: var(--text-muted); text-align: justify; min-height: 60px;">${safeOriginalDescription}</div>
                     </div>
                     ${shelf === 'current' ? `
                     <div class="reading-progress">
@@ -500,10 +567,23 @@ class BookRenderer {
                 </div>
             </div>
             <div class="glass-overlay">
-                <!-- Safe author and title data injection in the overlay -->
                 <strong>${safeTitle}</strong><br><small>${safeAuthors}</small>
             </div>
         `;
+
+        // Fetch AI-generated blurb asynchronously
+        const blurbElement = scene.querySelector('.book-blurb');
+        if (blurbElement) {
+            this.fetchAIBlurb(id, title, authors, volumeInfo.description || "", categories)
+                .then(aiBlurb => {
+                    if (aiBlurb && blurbElement) {
+                        blurbElement.textContent = aiBlurb;
+                    }
+                })
+                .catch(err => {
+                    // Silently keep fallback description
+                });
+        }
 
         // Interaction: Progress Slider
         const slider = scene.querySelector('.progress-slider');
@@ -606,10 +686,28 @@ class BookRenderer {
             });
             if (res.ok) {
                 const data = await res.json();
-                return data.vibe;
+                return data.data?.vibe || null;
             }
         } catch (e) {
-            // Silently fail to mock vibe
+            // Silently fail to use fallback
+        }
+        return null;
+    }
+
+    async fetchAIBlurb(bookId, title, author, description, categories = []) {
+        try {
+            const res = await fetch(`${MOOD_API_BASE}/generate-note`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ bookId, title, author, description, categories })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                return data.data?.blurb || null;
+            }
+        } catch (e) {
+            // Silently fail to use fallback
         }
         return null;
     }
@@ -713,6 +811,16 @@ class BookRenderer {
                     console.error('Failed to copy text: ', err);
                     showToast('Failed to copy book details.', 'error');
                 });
+            };
+        }
+
+        // Preview Button — opens the Google Books Embedded Viewer
+        const previewBtn = document.getElementById('modal-preview-btn');
+        if (previewBtn) {
+            previewBtn.onclick = () => {
+                if (window.BookPreview && book.id) {
+                    window.BookPreview.open(book.id, book.volumeInfo.title || 'Book Preview');
+                }
             };
         }
 
@@ -837,6 +945,86 @@ class BookRenderer {
         }
     }
 
+    async renderMoodCategorySection(categoryConfig, elementId, maxResults = 5) {
+        const container = document.getElementById(elementId);
+        if (!container) return;
+
+        this.renderSkeletons(container, maxResults);
+
+        try {
+            const res = await fetch(`${MOOD_API_BASE}/category-books`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    category: categoryConfig.category,
+                    vibe_description: categoryConfig.vibeDescription,
+                    count: maxResults
+                })
+            });
+
+            if (!res.ok) {
+                throw new Error(`Category API Error: ${res.status}`);
+            }
+
+            const payload = await res.json();
+            const categoryBooks = payload?.data?.books || [];
+
+            if (categoryBooks.length === 0) {
+                throw new Error(`No books returned for category: ${categoryConfig.category}`);
+            }
+
+            const resolvedBooks = await this.resolveCategoryBooks(categoryBooks);
+            if (resolvedBooks.length > 0) {
+                await this.renderBookCards(container, resolvedBooks.slice(0, maxResults));
+                return;
+            }
+
+            throw new Error(`Could not resolve Google Books matches for category: ${categoryConfig.category}`);
+        } catch (err) {
+            console.error(`Failed to load category shelf "${categoryConfig.category}"`, err);
+            await this.renderCuratedSection(categoryConfig.fallbackQuery, elementId, maxResults);
+        }
+    }
+
+    async resolveCategoryBooks(categoryBooks) {
+        const resolvedBooks = [];
+
+        for (const item of categoryBooks) {
+            const title = String(item?.title || '').trim();
+            const author = String(item?.author || '').trim();
+            if (!title) continue;
+
+            const searchQuery = author
+                ? `intitle:${title} inauthor:${author}`
+                : `intitle:${title}`;
+
+            try {
+                const client = window.GoogleBooksClient;
+                const data = client
+                    ? await client.fetchVolumes(searchQuery, { maxResults: 1, extraParams: '&printType=books' })
+                    : await (async () => {
+                        const keyParam = GOOGLE_API_KEY ? `&key=${GOOGLE_API_KEY}` : '';
+                        const res = await fetch(`${API_BASE}?q=${encodeURIComponent(searchQuery)}&maxResults=1&printType=books${keyParam}`);
+                        if (!res.ok) {
+                            throw new Error(`Google Books API Error: ${res.status}`);
+                        }
+                        return await res.json();
+                    })();
+
+                const matchedBook = data?.items?.[0];
+                if (matchedBook) {
+                    matchedBook.categoryReason = item.reason || '';
+                    resolvedBooks.push(matchedBook);
+                }
+            } catch (error) {
+                console.warn(`Failed to resolve category book "${title}"`, error);
+            }
+        }
+
+        return resolvedBooks;
+    }
+
     async renderBookCards(container, books) {
         container.innerHTML = '';
         if (!books || books.length === 0) {
@@ -878,6 +1066,11 @@ class LibraryManager {
 
         // Asynchronous initialization
         this._initPromise = this.init();
+    }
+
+    async ready() {
+        await this._initPromise;
+        return this;
     }
 
     async init() {
@@ -1330,6 +1523,19 @@ class LibraryManager {
         }
         return null;
     }
+
+    getShelfBooks(shelf) {
+        return Array.isArray(this.library[shelf]) ? [...this.library[shelf]] : [];
+    }
+
+    getLibrarySnapshot() {
+        return {
+            current: this.getShelfBooks('current'),
+            want: this.getShelfBooks('want'),
+            finished: this.getShelfBooks('finished')
+        };
+    }
+
     async removeBook(id) {
         const result = this.findBookInShelf(id);
         if (result) {
@@ -1369,6 +1575,60 @@ class LibraryManager {
             return true;
         }
         return false;
+    }
+
+    async moveBook(id, toShelf) {
+        const result = this.findBookInShelf(id);
+        if (!result) return false;
+
+        const { shelf: fromShelf, book } = result;
+        if (fromShelf === toShelf) return true;
+        if (!this.library[toShelf]) return false;
+
+        this.library[fromShelf] = this.library[fromShelf].filter(b => b.id !== id);
+
+        if (toShelf === 'finished' && book.progress !== 100) {
+            book.progress = 100;
+        } else if (toShelf === 'current' && (book.progress == null || book.progress === 100)) {
+            book.progress = 0;
+        }
+
+        this.library[toShelf].push(book);
+        this.saveLocally();
+
+        const user = this.getUser();
+        if (user && book.db_id) {
+            try {
+                const res = await fetch(`${this.apiBase}/library/${book.db_id}`, {
+                    method: 'PUT',
+                    headers: this.getAuthHeaders(),
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        shelf_type: toShelf,
+                        progress: book.progress,
+                        version: book.version
+                    })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    book.version = data.item.version;
+                    this.saveLocally();
+                } else if (res.status === 409) {
+                    showToast("Conflict detected! Syncing with server...", "error");
+                    await this.syncWithBackend();
+                    return false;
+                } else {
+                    const data = await res.json();
+                    console.error("Move failed:", data.error);
+                }
+            } catch (e) {
+                console.error("Failed to update backend during move", e);
+                showToast("Moved locally (Sync failed)", "info");
+            }
+        }
+
+        return true;
     }
 
     saveLocally() {
@@ -1558,6 +1818,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 1. Initialize Managers
     const libManager = new LibraryManager();
     window.libManager = libManager;
+    window.dispatchEvent(new CustomEvent('bibliodrift:library-manager-ready', {
+        detail: { libraryManager: libManager }
+    }));
+    libManager.ready().then(() => {
+        window.dispatchEvent(new CustomEvent('bibliodrift:library-manager-synced', {
+            detail: { libraryManager: libManager }
+        }));
+    });
 
     window.renderer = new BookRenderer(libManager);
     const themeManager = new ThemeManager();
@@ -1616,13 +1884,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
 
-    const isLoggedIn = !!libManager.getUser(); // Rely on user object instead of forgeable flag
+    const verifiedUser = await verifyStoredAuthSession();
+    const isLoggedIn = !!libManager.getUser() || !!verifiedUser; // Rely on user object instead of forgeable flag
     const authLink = document.getElementById('navAuthLink');
-    if (isLoggedIn && authLink) {
-        authLink.innerHTML = '<i class="fa-solid fa-user"></i>';
-        authLink.href = 'profile.html';
-        const tooltip = document.getElementById('navAuthTooltip');
-        if (tooltip) tooltip.innerHTML = '<i class="fa-solid fa-id-card"></i> Profile';
+    const tooltip = document.getElementById('navAuthTooltip');
+    renderAuthNavigation(authLink, tooltip, Boolean(verifiedUser));
+
+    // Redirect if already logged in and on the sign-in page
+    if (verifiedUser && window.location.pathname.endsWith('auth.html')) {
+        window.location.href = 'profile.html';
+        return;
+    }
+
+    if (verifiedUser) {
+        await libManager.syncWithBackend();
     }
 
     const searchInput = document.getElementById('searchInput');
@@ -1669,15 +1944,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderer.renderCuratedSection(query, 'search-results', 20);
     } else if (document.getElementById('row-rainy')) {
         console.log('📚 Initializing Curated Discovery Sections...');
+        const discoveryShelves = [
+            { type: 'query', query: 'subject:mystery atmosphere', elementId: 'row-rainy' },
+            { type: 'query', query: 'authors:arundhati roy|subject:india', elementId: 'row-indian' },
+            { type: 'query', query: 'subject:classic fiction', elementId: 'row-classics' },
+            {
+                type: 'category',
+                elementId: 'row-dark-academia',
+                category: 'Dark Academia',
+                vibeDescription: 'gothic, intellectual, melancholic, and candlelit stories set around obsession, old libraries, secret societies, and campus unease',
+                fallbackQuery: 'subject:gothic fiction subject:campus'
+            },
+            { type: 'query', query: 'subject:fiction', elementId: 'row-fiction' }
+        ];
         (async () => {
             try {
-                await renderer.renderCuratedSection('subject:mystery atmosphere', 'row-rainy');
-                await delay(500);
-                await renderer.renderCuratedSection('authors:arundhati roy|subject:india', 'row-indian');
-                await delay(500);
-                await renderer.renderCuratedSection('subject:classic fiction', 'row-classics');
-                await delay(500);
-                await renderer.renderCuratedSection('subject:fiction', 'row-fiction');
+                for (const shelf of discoveryShelves) {
+                    if (shelf.type === 'category') {
+                        await renderer.renderMoodCategorySection(shelf, shelf.elementId);
+                    } else {
+                        await renderer.renderCuratedSection(shelf.query, shelf.elementId);
+                    }
+                    await delay(500);
+                }
                 console.log('✅ Discovery shelves populated.');
             } catch (err) {
                 console.error('❌ Critical error during shelf initialization:', err);
@@ -1696,7 +1985,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Check if Profile Page
     if (document.getElementById('profile-page')) {
-        const user = libManager.getUser();
+        const user = verifiedUser;
         if (!user) {
             window.location.href = 'auth.html';
             return;
@@ -1763,6 +2052,91 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (barCurrent) barCurrent.style.width = `${(currentCount / totalBooks) * 100}%`;
                 if (barWant) barWant.style.width = `${(wantCount / totalBooks) * 100}%`;
             }, 100);
+        }
+
+        // =====================================================================
+        // READING PROGRESS OVERVIEW
+        // Renders a progress card for each book currently being read.
+        // =====================================================================
+        const progressGrid = document.getElementById('progress-overview-grid');
+        if (progressGrid) {
+            const currentBooks = libManager.library.current || [];
+            if (currentBooks.length === 0) {
+                progressGrid.innerHTML = '<div class="empty-state"><p>No books currently in progress. <a href="library.html">Visit your library</a> to start reading.</p></div>';
+            } else {
+                progressGrid.innerHTML = '';
+                currentBooks.forEach(book => {
+                    const title = book.volumeInfo?.title || book.title || 'Untitled';
+                    const author = (book.volumeInfo?.authors?.[0]) || book.author || 'Unknown Author';
+                    const cover = book.volumeInfo?.imageLinks?.thumbnail || book.cover || '';
+                    const progress = typeof book.progress === 'number' ? book.progress : 0;
+
+                    const card = document.createElement('div');
+                    card.className = 'progress-overview-card';
+                    card.innerHTML = `
+                        <div class="progress-card-cover">
+                            ${cover ? `<img src="${cover.replace('http:', 'https:')}" alt="${title}" loading="lazy">` : '<i class="fa-solid fa-book"></i>'}
+                        </div>
+                        <div class="progress-card-info">
+                            <div class="progress-card-title">${title}</div>
+                            <div class="progress-card-author">${author}</div>
+                            <div class="progress-card-bar-wrap">
+                                <div class="progress-card-bar-track">
+                                    <div class="progress-card-bar-fill" style="width:${progress}%"></div>
+                                </div>
+                                <span class="progress-card-pct">${progress}%</span>
+                            </div>
+                            <div class="progress-card-quick-update">
+                                <input type="range" min="0" max="100" value="${progress}"
+                                    class="progress-card-slider"
+                                    aria-label="Update reading progress for ${title}">
+                                <button class="progress-card-save-btn" data-book-id="${book.id}">
+                                    <i class="fa-solid fa-floppy-disk"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+
+                    // Wire up the quick-update slider
+                    const slider = card.querySelector('.progress-card-slider');
+                    const barFill = card.querySelector('.progress-card-bar-fill');
+                    const pctLabel = card.querySelector('.progress-card-pct');
+                    const saveBtn = card.querySelector('.progress-card-save-btn');
+
+                    slider.addEventListener('input', () => {
+                        const val = parseInt(slider.value);
+                        barFill.style.width = `${val}%`;
+                        pctLabel.textContent = `${val}%`;
+                    });
+
+                    saveBtn.addEventListener('click', async () => {
+                        const newProgress = parseInt(slider.value);
+                        saveBtn.disabled = true;
+                        saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+                        try {
+                            await libManager.updateBook(book.id, { progress: newProgress });
+                            book.progress = newProgress;
+                            saveBtn.innerHTML = '<i class="fa-solid fa-check"></i>';
+                            saveBtn.style.background = '#4caf50';
+                            setTimeout(() => {
+                                saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i>';
+                                saveBtn.style.background = '';
+                                saveBtn.disabled = false;
+                            }, 2000);
+                        } catch (err) {
+                            saveBtn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
+                            saveBtn.style.background = '#e53935';
+                            setTimeout(() => {
+                                saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i>';
+                                saveBtn.style.background = '';
+                                saveBtn.disabled = false;
+                            }, 2000);
+                        }
+                    });
+
+                    progressGrid.appendChild(card);
+                });
+            }
         }
 
         // Populate Achievements
@@ -1851,6 +2225,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function handleAuth(event) {
     event.preventDefault();
     const form = event.target;
+    const btn = form.querySelector('button[type="submit"]') || document.getElementById('submitBtn');
+    const originalText = btn ? btn.innerHTML : (form.dataset.mode === 'register' ? 'Sign Up' : 'Sign In');
+
+    // 1. Immediate UI Feedback: Disable button and show loading state
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Processing...';
+    }
+
     // Determine mode from dataset (set by our toggle logic) or default to login
     const mode = form.dataset.mode || 'login';
 
@@ -1858,11 +2241,37 @@ async function handleAuth(event) {
     const password = form.querySelector('input[type="password"]').value;
     const usernameInput = document.getElementById("username");
 
+    // Helper to reset button state on failure
+    const resetBtn = () => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
+    };
+
     // Validate Email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
         if (typeof showToast === 'function') showToast("Enter a valid email address", "error");
         else alert("Enter a valid email address");
+        resetBtn();
+        return;
+    }
+
+    // Demo bypass logic
+    if (email === 'demo@bibliodrift.com') {
+        const demoUser = { id: 1, username: 'Demo User', email: 'demo@bibliodrift.com' };
+        SafeStorage.set('bibliodrift_user', JSON.stringify(demoUser));
+        SafeStorage.set('isLoggedIn', 'true');
+        SafeStorage.set('bibliodrift_token', 'demo-token-12345');
+        
+        if (typeof showToast === 'function')
+            showToast(`Welcome, Demo User!`, "success");
+
+        // Keep button disabled during redirect delay
+        setTimeout(() => {
+            window.location.href = "library.html";
+        }, 1000);
         return;
     }
 
@@ -1880,11 +2289,6 @@ async function handleAuth(event) {
     }
 
     try {
-        const btn = form.querySelector('button');
-        const originalText = btn.textContent;
-        btn.textContent = 'Processing...';
-        btn.disabled = true;
-
         const res = await fetch(`${MOOD_API_BASE}${endpoint.replace('/api/v1', '')}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1894,38 +2298,36 @@ async function handleAuth(event) {
 
         const data = await res.json();
 
-        btn.textContent = originalText;
-        btn.disabled = false;
-
         if (res.ok) {
             // Success!
             // Token is now in an HttpOnly cookie (managed by backend)
             SafeStorage.set('bibliodrift_user', JSON.stringify(data.user));
+            SafeStorage.set('isLoggedIn', 'true');
 
             if (typeof showToast === 'function')
                 showToast(`${mode === 'login' ? 'Welcome back' : 'Welcome'}, ${data.user.username}!`, "success");
 
             // SYNC LOGIC
-            // If we have a library manager exposed, use it to sync anonymous data
             if (window.libManager) {
                 if (typeof showToast === 'function') showToast("Syncing your library...", "info");
                 await window.libManager.syncLocalToBackend(data.user);
             }
 
-            // Redirect
+            // Redirect - Button remains disabled
             setTimeout(() => {
                 window.location.href = "library.html";
             }, 1000);
         } else {
+            // Authentication failed - re-enable button
             if (typeof showToast === 'function') showToast(data.error || "Authentication failed", "error");
             else alert(data.error || "Authentication failed");
+            resetBtn();
         }
     } catch (e) {
         console.error("Auth Error", e);
         if (typeof showToast === 'function') showToast("Server connection failed", "error");
         else alert("Server connection failed");
-        const btn = form.querySelector('button');
-        if (btn) btn.disabled = false;
+        resetBtn();
     }
 }
 
@@ -2142,12 +2544,22 @@ const KeyboardShortcuts = {
             // Get the book data from the element
             const bookId = bookElement.dataset.bookId;
             if (window.bookshelfRenderer && bookId) {
-                // Find the book data by traversing the library
-                const storage = JSON.parse(localStorage.getItem('bibliodrift_library')) || { current: [], want: [], finished: [] };
+                const storage = window.libManager?.getLibrarySnapshot?.() || { current: [], want: [], finished: [] };
                 for (const shelf of ['current', 'want', 'finished']) {
                     const book = storage[shelf].find(b => b.id === bookId);
                     if (book) {
-                        window.bookshelfRenderer.currentBook = book;
+                        window.bookshelfRenderer.currentBook = book.volumeInfo ? {
+                            id: book.id,
+                            title: book.volumeInfo.title || 'Untitled',
+                            author: (book.volumeInfo.authors && book.volumeInfo.authors[0]) || 'Unknown',
+                            cover: book.volumeInfo.imageLinks?.thumbnail || '',
+                            description: book.volumeInfo.description || '',
+                            rating: book.volumeInfo.averageRating || 0,
+                            ratingCount: book.volumeInfo.ratingsCount || 0,
+                            categories: book.volumeInfo.categories || [],
+                            moods: book.moods || [],
+                            reviews: []
+                        } : book;
                         break;
                     }
                 }
@@ -2201,7 +2613,7 @@ const KeyboardShortcuts = {
         }
 
         const currentBook = window.bookshelfRenderer.currentBook;
-        const storage = JSON.parse(localStorage.getItem('bibliodrift_library')) || { current: [], want: [], finished: [] };
+        const storage = window.libManager?.getLibrarySnapshot?.() || { current: [], want: [], finished: [] };
 
         // Find current shelf
         let currentShelf = null;

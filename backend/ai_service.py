@@ -89,26 +89,21 @@ class PromptTemplates:
     
     @staticmethod
     def get_book_note_prompt(title: str, author: str, description: str, mood_context: str = "", vibe: str = "") -> str:
-        """Generate book note prompt template with vibe support."""
+        """Generate engaging mini-blurb for a book."""
         template = os.getenv('BOOK_NOTE_PROMPT_TEMPLATE', 
-            """You are a cozy, knowledgeable bookseller in a quiet shop. A customer is looking for a book recommendation based on their current vibe: "{vibe}".
+            """You are a passionate bookseller writing engaging book descriptions.
 
 Book: "{title}" by {author}
 Description: {description}
 {mood_context}
 
-IMPORTANT: Do NOT use hardcoded lists. Generate a recommendation dynamically based purely on the provided vibe: "{vibe}".
+Write a rich, engaging mini-blurb (80-120 words) that:
+- Captures what makes this book unique and special
+- Highlights emotional appeal or key themes
+- Avoids generic phrases
+- Makes readers want to pick it up
 
-Output a JSON object with the following structure:
-{{
-  "title": "A compelling book title that matches the vibe",
-  "author": "Author name that fits the recommendation", 
-  "cover_url": "URL or placeholder for book cover image",
-  "bookseller_note": "A warm, 3-4 sentence paragraph describing the reading experience for this specific vibe"
-}}
-
-Constraint: Keep the bookseller_note under 50 words and make it feel personal and atmospheric.
-Style: Warm, insightful, like a trusted bookseller sharing a hidden gem.""")
+Output ONLY the mini-blurb text, no JSON or formatting.""")
         
         max_words = os.getenv('BOOK_NOTE_MAX_WORDS', '30')
         return template.format(
@@ -253,6 +248,80 @@ class LLMService:
         """Check if any LLM service is available."""
         return (self.openai_client is not None) or (self.groq_client is not None) or (self.gemini_client is not None)
 
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """
+        Estimate token count for a string using the standard ~4 chars/token
+        heuristic. This avoids a hard tiktoken dependency while being accurate
+        enough for context-window budget management.
+        """
+        return max(1, len(text) // 4)
+
+    def trim_history_to_token_budget(
+        self,
+        system_prompt: str,
+        messages: list,
+        max_tokens_response: int,
+        model_context_limit: int = 4096,
+    ) -> list:
+        """
+        Trim the conversation history so that:
+            estimated_tokens(system) + estimated_tokens(history) + max_tokens_response
+            <= model_context_limit
+
+        Strategy: always keep the most recent messages. Older messages are
+        dropped first. The current user message (last item) is never dropped.
+
+        Args:
+            system_prompt: The system/persona prompt sent to the model.
+            messages: Full list of role/content dicts (current message included).
+            max_tokens_response: Tokens reserved for the model's reply.
+            model_context_limit: Hard token ceiling for the chosen model.
+
+        Returns:
+            A trimmed list of messages that fits within the budget.
+        """
+        # Budget = total context - system tokens - response reservation - 64 safety margin
+        system_tokens = self._estimate_tokens(system_prompt)
+        budget = model_context_limit - system_tokens - max_tokens_response - 64
+
+        if budget <= 0:
+            # System prompt alone is too large — just send the last user message
+            logger.warning(
+                "trim_history_to_token_budget: system prompt (%d tokens) leaves no room "
+                "for history (budget=%d). Sending only the current message.",
+                system_tokens, budget,
+            )
+            return [messages[-1]] if messages else []
+
+        # Walk from newest to oldest, accumulating until budget is exhausted
+        kept = []
+        tokens_used = 0
+        for msg in reversed(messages):
+            msg_tokens = self._estimate_tokens(msg.get("content", ""))
+            if tokens_used + msg_tokens > budget:
+                # This message would overflow — stop here
+                logger.debug(
+                    "trim_history_to_token_budget: dropping older messages "
+                    "(used=%d, budget=%d, next_msg=%d tokens)",
+                    tokens_used, budget, msg_tokens,
+                )
+                break
+            kept.append(msg)
+            tokens_used += msg_tokens
+
+        kept.reverse()
+
+        dropped = len(messages) - len(kept)
+        if dropped > 0:
+            logger.info(
+                "trim_history_to_token_budget: dropped %d old message(s) to stay within "
+                "%d-token context budget (system=%d, history=%d, response_reserve=%d).",
+                dropped, model_context_limit, system_tokens, tokens_used, max_tokens_response,
+            )
+
+        return kept
+
     def generate_chat(self, system_prompt: str, messages: list, max_tokens: Optional[int] = None) -> Optional[str]:
         """
         Generate a response for a multi-turn conversation.
@@ -272,40 +341,69 @@ class LLMService:
         if max_tokens is None:
             max_tokens = self.config.get('gemini_max_tokens', 600)
 
-        # Build a combined prompt for providers that don't have native chat API
+        # Per-model context window limits (conservative estimates)
+        _MODEL_CONTEXT_LIMITS = {
+            # Groq-hosted models
+            'llama-3.1-8b-instant': 8192,
+            'llama-3.3-70b-versatile': 32768,
+            'llama3-8b-8192': 8192,
+            'llama3-70b-8192': 8192,
+            'mixtral-8x7b-32768': 32768,
+            'gemma2-9b-it': 8192,
+            # OpenAI models
+            'gpt-3.5-turbo': 4096,
+            'gpt-4': 8192,
+            'gpt-4o': 16384,
+            'gpt-4o-mini': 16384,
+            # Gemini models
+            'models/gemini-2.0-flash-lite': 32768,
+            'models/gemini-1.5-flash': 32768,
+            'gemini-1.5-flash': 32768,
+            'gemini-1.5-pro': 32768,
+        }
+
+        def _get_context_limit(model_name: str) -> int:
+            """Return the context limit for a model, defaulting to 4096."""
+            return _MODEL_CONTEXT_LIMITS.get(model_name, 4096)
+
+        # Build a combined flat prompt for providers without a native chat API
         def _build_flat_prompt(system: str, msgs: list) -> str:
             lines = [system, ""]
             for m in msgs:
-                role = "You" if m.get("role") == "assistant" else "Customer"
-                lines.append(f"{role}: {m.get('content', '')}")            
-            lines.append("You:")
+                role = "Elara" if m.get("role") == "assistant" else "Customer"
+                lines.append(f"{role}: {m.get('content', '')}")
+            lines.append("Elara:")
             return "\n".join(lines)
 
         try:
-            # --- Gemini (preferred for persona chat) ---
+            # --- Gemini ---
             if self.gemini_client and (self.preferred_llm == 'gemini' or not self.groq_client):
                 try:
-                    # Universal AI Mode: Simplest possible call
+                    context_limit = _get_context_limit(self.config['gemini_model'])
+                    trimmed = self.trim_history_to_token_budget(
+                        system_prompt, messages, max_tokens, context_limit
+                    )
+                    flat_prompt = _build_flat_prompt(system_prompt, trimmed)
                     response = self.gemini_client.models.generate_content(
                         model=self.config['gemini_model'],
-                        contents=f"{system_prompt}\n\nCustomer: {user_message}\nElara:"
+                        contents=flat_prompt,
                     )
                     if response and response.text:
                         return response.text.strip()
-                    if response and response.text:
-                        return response.text.strip()
-                    else:
-                        print(f"[DIAGNOSTIC] Gemini response empty. Status: {getattr(response, 'status', 'unknown')}")
+                    logger.warning("Gemini chat returned empty response")
                 except Exception as e:
-                    print(f"[DIAGNOSTIC] Gemini chat failed: {type(e).__name__} - {str(e)}")
                     logger.warning(f"Gemini multi-turn chat failed, falling back: {e}")
 
             # --- Groq (OpenAI-compatible chat API) ---
             if self.groq_client:
                 try:
+                    context_limit = _get_context_limit(self.config['groq_model'])
+                    trimmed = self.trim_history_to_token_budget(
+                        system_prompt, messages, max_tokens, context_limit
+                    )
                     groq_messages = [{"role": "system", "content": system_prompt}] + [
                         {"role": m.get("role", "user"), "content": m.get("content", "")}
-                        for m in messages
+                        for m in trimmed
                     ]
                     response = self.groq_client.chat.completions.create(
                         model=self.config['groq_model'],
@@ -321,9 +419,13 @@ class LLMService:
             if self.openai_client:
                 from openai import OpenAI
                 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                context_limit = _get_context_limit(self.config['openai_model'])
+                trimmed = self.trim_history_to_token_budget(
+                    system_prompt, messages, max_tokens, context_limit
+                )
                 oai_messages = [{"role": "system", "content": system_prompt}] + [
                     {"role": m.get("role", "user"), "content": m.get("content", "")}
-                    for m in messages
+                    for m in trimmed
                 ]
                 response = client.chat.completions.create(
                     model=self.config['openai_model'],
@@ -486,8 +588,17 @@ __all__ = ['generate_book_note', 'get_ai_recommendations', 'get_category_books',
            'LLMService', 'PromptTemplates']
 
 
+def _count_words(text: str) -> int:
+    return len(re.findall(r'\S+', text or ''))
+
+
+def _is_valid_book_note(text: str) -> bool:
+    word_count = _count_words(text)
+    return 80 <= word_count <= 120
+
+
 def generate_book_note(description, title="", author="", vibe=""):
-    """Generate book note using LLM with vibe-based recommendations."""
+    """Generate AI mini-blurb for a book."""
     mood_context = ""
     if MOOD_ANALYSIS_AVAILABLE and title and author:
         try:
@@ -502,39 +613,37 @@ def generate_book_note(description, title="", author="", vibe=""):
             llm_response = llm_service.generate_text(prompt, llm_service.config['book_note_max_tokens'])
             
             if llm_response:
-                try:
-                    import json
-                    parsed_response = json.loads(llm_response)
-                    if isinstance(parsed_response, dict) and all(key in parsed_response for key in ['title', 'author', 'bookseller_note']):
-                        logger.info(f"Successfully generated structured recommendation for vibe: {vibe}")
-                        return parsed_response
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning("LLM response was not valid JSON, using as plain text")
-                    return {
-                        "vibe": llm_response,
-                        "title": title or "A Perfect Match",
-                        "author": author or "Recommended Author"
-                    }
+                cleaned_response = llm_response.strip()
+                if _is_valid_book_note(cleaned_response):
+                    return {"blurb": cleaned_response}
+
+                retry_prompt = (
+                    f"{prompt}\n\n"
+                    "Your last answer did not meet the 80-120 word requirement. "
+                    "Rewrite it as a single mini-blurb between 80 and 120 words. "
+                    "Do not add JSON, bullets, or extra commentary."
+                )
+                retry_response = llm_service.generate_text(retry_prompt, llm_service.config['book_note_max_tokens'])
+                if retry_response:
+                    cleaned_retry = retry_response.strip()
+                    if _is_valid_book_note(cleaned_retry):
+                        return {"blurb": cleaned_retry}
+
+                logger.warning(
+                    "Generated book note did not meet the 80-120 word target for %s by %s",
+                    title,
+                    author,
+                )
+                return {"blurb": cleaned_response}
                 
         except Exception as e:
             logger.error(f"LLM book note generation failed: {e}")
     
-    if MOOD_ANALYSIS_AVAILABLE and title and author:
-        try:
-            return generate_enhanced_book_note(description, title, author)
-        except Exception as e:
-            logger.debug(f"Mood analysis fallback failed: {e}")
+    # Fallback: use original description or generic fallback
+    if description and len(description) > 0:
+        return {"blurb": description[:200] + "..." if len(description) > 200 else description}
     
-    if len(description) > 200:
-        return {"vibe": "A deep, complex narrative that readers find emotionally resonant."}
-    elif len(description) > 100:
-        return {"vibe": "A compelling story with layers waiting to be discovered."}
-    elif "mystery" in description.lower():
-        return {"vibe": "A mysterious tale that will keep you guessing."}
-    elif "romance" in description.lower():
-        return {"vibe": "A heartwarming story perfect for cozy reading."}
-    else:
-        return {"vibe": "A delightful read for any quiet moment."}
+    return {"blurb": "A remarkable book waiting to be discovered."}
 
 
 @cache_recommendations
@@ -694,15 +803,12 @@ def generate_chat_response(user_message: str, conversation_history: list = []) -
             "Come back in a moment — the books are waiting, and so am I."
         )
 
-    # Build conversation messages for the LLM
-    # We keep only the last 8 exchanges to stay within token limits
-    recent_history = conversation_history[-8:] if conversation_history else []
-
-    # Normalise history into role/content format
+    # Normalise history into role/content format expected by generate_chat.
+    # We do NOT pre-slice here — trim_history_to_token_budget handles that
+    # dynamically based on actual token estimates, not a fixed message count.
     messages = []
-    for msg in recent_history:
+    for msg in (conversation_history or []):
         role = msg.get("type", msg.get("role", "user"))
-        # Map chat UI types to LLM roles
         if role in ("bookseller", "assistant"):
             role = "assistant"
         else:
