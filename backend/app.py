@@ -14,7 +14,7 @@ from flask_migrate import Migrate
 from flask_wtf.csrf import CSRFProtect, generate_csrf, CSRFError
 from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
-from backend.spine_generator import create_spine
+from spine_generator import create_spine
 import os
 import requests
 
