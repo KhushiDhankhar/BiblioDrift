@@ -110,6 +110,27 @@
     .main-footer {
       background-color: var(--footer-bg) !important;
       border-top: 1px solid var(--border-color);
+    /* Map vault-specific variables to app-wide variables for uniformity */
+    :root {
+      --bg-surface: var(--bg-color);
+      --bg-card: var(--input-bg);
+      --border-color: var(--glass-border);
+      --border-focus: var(--accent-gold);
+      --field-bg: var(--input-bg);
+      --shelf-bg: var(--wood-dark);
+      --shelf-shadow: rgba(0, 0, 0, 0.4);
+      --reader-bg: rgba(0, 0, 0, 0.9);
+      --page-bg: var(--paper-color);
+      --page-text: var(--text-main);
+    }
+
+    [data-theme="night"] {
+      --shelf-shadow: rgba(0, 0, 0, 0.8);
+    }
+
+    /* Remove body, header, footer overrides so style.css takes over */
+    header, .main-footer, .hero, section, div, input, textarea, select {
+      transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
     }
 
     /* Form Fields */
@@ -572,6 +593,43 @@
             </button>
         </div>
     </header>
+     <header>
+    <a href="index.html" class="logo">
+      <img style="height: 40px" src="../assets/images/biblioDrift_favicon.png" alt="BiblioDrift Logo"> BiblioDrift
+    </a>
+    <div class="header-controls">
+      <div class="search-bar">
+        <input type="text" id="searchInput" class="search-input" placeholder="Search for a feeling...">
+        <i class="fa-solid fa-search search-icon" id="searchIcon"></i>
+      </div>
+      <nav class="nav-links">
+        <div class="tooltip">
+          <a href="index.html" >Discovery</a>
+          <span class="tooltip-text"><i class="fa-solid fa-wand-magic-sparkles"></i> Explore books</span>
+        </div>
+        <div class="tooltip">
+          <a href="vault.html" class="active">My Vault</a>
+          <span class="tooltip-text"><i class="fa-solid fa-vault"></i> My Vault</span>
+        </div>
+        <div class="tooltip">
+          <a href="library.html" >My Library</a>
+          <span class="tooltip-text"><i class="fa-solid fa-book"></i> My Library</span>
+        </div>
+        <div class="tooltip">
+          <a href="chat.html" >Chat</a>
+          <span class="tooltip-text"><i class="fa-solid fa-comments"></i> Chat</span>
+        </div>
+        <!-- DYNAMIC AUTH LINK -->
+        <div class="tooltip">
+          <a href="auth.html" id="navAuthLink" >Sign In</a>
+          <span class="tooltip-text" id="navAuthTooltip"><i class="fa-solid fa-key"></i> Access account</span>
+        </div>
+      </nav>
+      <button id="themeToggle" class="btn-icon" title="Toggle Theme">
+        <i class="fa-solid fa-moon"></i>
+      </button>
+    </div>
+  </header>
 
   <main style="padding: 40px 20px; max-width: 1200px; margin: 0 auto;">
     <section class="hero" style="text-align: center; margin-bottom: 40px;">
@@ -706,6 +764,7 @@
     </div>
   </footer>
 
+  <!-- Back to Top Button -->
   <button id="backToTop" class="btn-icon back-to-top" title="Back to Top" onclick="window.scrollTo({top: 0, behavior: 'smooth'});">
     <i class="fa-solid fa-arrow-up"></i>
   </button>
@@ -713,6 +772,7 @@
   <!-- Ambient Sanctuary UI -->
   <div class="ambient-sanctuary">
     <button id="ambientToggle" title="Ambient Sanctuary">
+    <button id="ambientToggle" title="Ambient Sanctuary" aria-expanded="false" aria-controls="ambientPanel">
       <i class="fa-solid fa-leaf"></i>
     </button>
     <div id="ambientPanel" class="ambient-panel">
@@ -748,6 +808,11 @@
       <div class="volume-control">
         <label for="ambientVolume" style="color: var(--text-main) !important;"><i class="fa-solid fa-volume-high"></i> Volume</label>
         <input type="range" id="ambientVolume" min="0" max="1" step="0.1" value="0.5" style="width: 100%;">
+        <div class="range-wrap">
+          <div class="range-track" aria-hidden="true"></div>
+          <div class="range-fill" aria-hidden="true"></div>
+          <input type="range" id="ambientVolume" min="0" max="1" step="0.1" value="0.5" style="width: 100%;">
+        </div>
       </div>
     </div>
   </div>
@@ -757,6 +822,18 @@
   <script src="/script/header-scroll.js"></script>
   <script src="/js/ambient.js"></script>
   <script src="/js/pwa.js"></script>
+
+  <div id="immersiveBookReader" class="realistic-book-overlay">
+    <button class="close-reader-trigger" id="closeReaderBtn" title="Close Book Workspace Layout Layer"><i class="fa-solid fa-xmark"></i></button>
+    <div class="book-spread-container" id="bookSpreadTarget"></div>
+  </div>
+
+  <script src="../js/config.js"></script>
+  <script src="../js/security.js"></script>
+  <script src="../script/header-scroll.js"></script>
+  <script src="../js/ambient.js"></script>
+  <script src="../js/footer.js"></script>
+  <script src="../js/pwa.js"></script>
 
   <script>
     document.addEventListener("DOMContentLoaded", async () => {

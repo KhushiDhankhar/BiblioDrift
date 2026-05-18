@@ -17,10 +17,11 @@ const createFooter = () => {
         <nav class="footer-nav" aria-label="Footer Navigation">
           <h3>Explore</h3>
           <ul>
-            <li><a href="../index.html">Discovery</a></li>
-            <li><a href="../library.html">My Library</a></li>
-            <li><a href="../chat.html">Literary Chat</a></li>
-            <li><a href="../auth.html">Account</a></li>
+            <li><a href="index.html">Discovery</a></li>
+            <li><a href="vault.html">My Vault</a></li>
+            <li><a href="library.html">My Library</a></li>
+            <li><a href="chat.html">Literary Chat</a></li>
+            <li><a href="auth.html">Account</a></li>
             <li>
           <a href="https://github.com/devanshi14malhotra/BiblioDrift" target="_blank">
            Repository

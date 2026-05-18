@@ -108,7 +108,7 @@
         banner.setAttribute('aria-label', 'Install BiblioDrift app');
         banner.innerHTML = `
             <div class="pwa-banner-content">
-                <img src="/frontend/assets/images/biblioDrift_favicon.png"
+                <img src="../assets/images/biblioDrift_favicon.png"
                      alt="BiblioDrift icon" class="pwa-banner-icon">
                 <div class="pwa-banner-text">
                     <strong>Install BiblioDrift.</strong>
