@@ -2349,7 +2349,7 @@ class BookshelfRenderer3D {
             } else {
                 // Mock vibe for offline/fallback
                 setTimeout(() => {
-                    aiNoteEl.innerHTML = `< p style = "font-size: 0.9rem; line-height: 1.5; color: var(--text-secondary); font-style: italic;" > "A journey that resonates with the soul, perfect for quiet introspection."</p > `;
+                    aiNoteEl.innerHTML = `"A journey that resonates with the soul, perfect for quiet introspection."</p > `;
                 }, 800);
             }
         }
