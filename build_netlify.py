@@ -56,6 +56,20 @@ def build_html() -> None:
         target_file.write_text(rewrite_html(content), encoding="utf-8")
 
 
+def write_clean_route_redirects() -> None:
+    redirects = [
+        "/chat /chat.html 200",
+        "/auth /auth.html 200",
+        "/library /library.html 200",
+        "/vault /vault.html 200",
+        "/profile /profile.html 200",
+        "/privacy-policy /privacy-policy.html 200",
+        "/terms-and-conditions /terms-and-conditions.html 200",
+        "/request-book /request-book.html 200",
+    ]
+    (DIST / "_redirects").write_text("\n".join(redirects) + "\n", encoding="utf-8")
+
+
 def inject_api_base_override() -> None:
     """Optional Netlify build env MOOD_API_BASE → runtime override in dist config.js."""
     api_base = os.getenv("MOOD_API_BASE", "").strip()
@@ -79,6 +93,7 @@ def main() -> None:
         shutil.copy2(manifest_src, DIST / "manifest.json")
         
     build_html()
+    write_clean_route_redirects()
     inject_api_base_override()
 
 
