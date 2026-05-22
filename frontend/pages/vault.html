@@ -852,7 +852,7 @@
         }
 
         let vaultRenderIndex = 0;
-        const vaultChunkSize = 20;
+        const vaultChunkSize = window.CONFIG?.CHUNK_SIZE || 20;
 
         if (shelfRow._vaultObserver) {
             shelfRow._vaultObserver.disconnect();
@@ -1069,6 +1069,8 @@
             if (vaultRenderIndex < localBooks.length) {
                 shelfRow.appendChild(sentinel);
                 shelfRow._vaultObserver.observe(sentinel);
+            } else if (shelfRow._vaultObserver) {
+                shelfRow._vaultObserver.disconnect();
             }
         }
 

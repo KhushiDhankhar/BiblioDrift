@@ -213,7 +213,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             let vaultJsRenderIndex = 0;
-            const vaultJsChunkSize = 20;
+            const vaultJsChunkSize = window.CONFIG?.CHUNK_SIZE || 20;
 
             if (vaultGrid._vaultObserver) {
                 vaultGrid._vaultObserver.disconnect();
@@ -325,6 +325,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (vaultJsRenderIndex < dataCollection.length) {
                     vaultGrid.appendChild(sentinel);
                     vaultGrid._vaultObserver.observe(sentinel);
+                } else if (vaultGrid._vaultObserver) {
+                    vaultGrid._vaultObserver.disconnect();
                 }
             }
 

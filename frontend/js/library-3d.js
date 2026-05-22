@@ -801,7 +801,7 @@ class BookshelfRenderer3D {
         container.style.width = '100%';
 
         let renderIndex = 0;
-        const chunkSize = 20;
+        const chunkSize = window.CONFIG?.CHUNK_SIZE || 20;
 
         if (container._shelfObserver) {
             container._shelfObserver.disconnect();
@@ -835,6 +835,8 @@ class BookshelfRenderer3D {
             if (renderIndex < books.length) {
                 container.appendChild(sentinel);
                 container._shelfObserver.observe(sentinel);
+            } else if (container._shelfObserver) {
+                container._shelfObserver.disconnect();
             }
         };
 
@@ -1267,7 +1269,7 @@ class BookshelfRenderer3D {
         container.innerHTML = '';
 
         let renderIndex = 0;
-        const chunkSize = 20;
+        const chunkSize = window.CONFIG?.CHUNK_SIZE || 20;
 
         if (container._shelfObserver) {
             container._shelfObserver.disconnect();
@@ -1301,6 +1303,8 @@ class BookshelfRenderer3D {
             if (renderIndex < books.length) {
                 container.appendChild(sentinel);
                 container._shelfObserver.observe(sentinel);
+            } else if (container._shelfObserver) {
+                container._shelfObserver.disconnect();
             }
         };
 
