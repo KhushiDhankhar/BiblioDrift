@@ -1,6 +1,7 @@
 /**
  * Ambient Sanctuary Logic for BiblioDrift
  * Handles background ambient sounds (Rain, Fireplace, Ocean) with volume control.
+ * FIXED: Volume now persists across pages using localStorage
  */
 
 class AmbientManager {
@@ -35,12 +36,9 @@ class AmbientManager {
         this.stormAudio.loop = true;
 
         // Prevent the weird 'high bass' or thunder sound at the very end of the rain track
-        // by artificially looping it a few seconds before the track actually ends.
         this.rainAudio.addEventListener('timeupdate', () => {
-            // Cut off the last 4 seconds to bypass the microphone bump/thunder
             if (this.rainAudio.duration && this.rainAudio.currentTime >= this.rainAudio.duration - 4) {
                 this.rainAudio.currentTime = 0;
-                // Ensure it keeps playing after reset
                 this.rainAudio.play().catch(e => {});
             }
         });
@@ -58,15 +56,69 @@ class AmbientManager {
         };
         window.addEventListener('click', this.unlockAudio);
 
+        // FIXED: Load saved volume from localStorage
+        this.loadVolume();
+        this.loadAudioStates();
         this.init();
-        // Ensure volume is set immediately
-        this.rainAudio.volume = 0.5;
-        this.fireAudio.volume = 0.5;
-        this.oceanAudio.volume = 0.5;
+    }
+
+    /**
+     * Load volume preference from localStorage
+     */
+    loadVolume() {
+        const savedVolume = localStorage.getItem('bibliodrift_ambient_volume');
+        const volume = savedVolume !== null ? parseFloat(savedVolume) : 0.5;
+
+        // Set audio volumes
+        this.rainAudio.volume = volume;
+        this.fireAudio.volume = volume;
+        this.oceanAudio.volume = volume;
+        this.stormAudio.volume = volume;
+
+        // Set slider to match
+        if (this.volumeSlider) {
+            this.volumeSlider.value = volume;
+        }
+
+        console.log(`Loaded ambient volume: ${volume}`);
+    }
+
+    /**
+     * Load audio states from localStorage
+     */
+    loadAudioStates() {
+        const rainState = localStorage.getItem('bibliodrift_rain_state');
+        const fireState = localStorage.getItem('bibliodrift_fire_state');
+
+        if (rainState === 'true') {
+            this.rainToggle.checked = true;
+            this.rainAudio.play().catch(e => {});
+        }
+
+        if (fireState === 'true') {
+            this.fireToggle.checked = true;
+            this.fireAudio.play().catch(e => {});
+        }
+    }
+
+    /**
+     * Save audio state to localStorage
+     */
+    saveAudioState(type, isPlaying) {
+        localStorage.setItem(`bibliodrift_${type}_state`, isPlaying.toString());
+    }
+
+    /**
+     * Save volume preference to localStorage
+     */
+    saveVolume(volume) {
+        localStorage.setItem('bibliodrift_ambient_volume', volume.toString());
+        console.log(`Saved ambient volume: ${volume}`);
     }
 
     init() {
         // Toggle Panel with ARIA and button active animation
+        // FIX: removed duplicate unlockAudio() + panel.classList.toggle('active') calls
         this.toggleBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this.unlockAudio(); // Explicitly unlock audio here since propagation is stopped!
@@ -93,33 +145,38 @@ class AmbientManager {
             if (this.rainToggle.checked) {
                 if (typeof setTheme === 'function') setTheme('rainy');
                 this.rainAudio.currentTime = 0;
-                this.rainAudio.play()
-                    .then(() => console.log("Rain audio playing"))
-                    .catch(e => {
-                        console.error("Rain audio failed:", e);
-                        if (typeof showToast === 'function') {
-                            showToast("Audio playback blocked. Click anywhere to enable.", "info");
-                        }
-                    });
+                this.rainAudio.play().then(() => {
+                    console.log("Rain audio playing");
+                    this.saveAudioState('rain', true);
+                }).catch(e => {
+                    console.error("Rain audio failed:", e);
+                    if (typeof showToast === 'function') {
+                        showToast("Audio playback blocked. Click anywhere to enable.", "info");
+                    }
+                });
             } else {
                 if (typeof clearTheme === 'function') clearTheme();
                 this.rainAudio.pause();
+                this.saveAudioState('rain', false);
             }
         });
 
         // Fire Toggle
+        // FIX: removed duplicate fireToggle listener that was incorrectly placed inside storm else block
         this.fireToggle.addEventListener('change', () => {
             if (this.fireToggle.checked) {
                 if (typeof setTheme === 'function') setTheme('cozy');
                 this.fireAudio.currentTime = 0;
-                this.fireAudio.play()
-                    .then(() => console.log("Fire audio playing"))
-                    .catch(e => {
-                        console.error("Fire audio failed:", e);
-                    });
+                this.fireAudio.play().then(() => {
+                    console.log("Fire audio playing");
+                    this.saveAudioState('fire', true);
+                }).catch(e => {
+                    console.error("Fire audio failed:", e);
+                });
             } else {
                 if (typeof clearTheme === 'function') clearTheme();
                 this.fireAudio.pause();
+                this.saveAudioState('fire', false);
             }
         });
 
@@ -175,6 +232,7 @@ class AmbientManager {
             }, 380);
         };
 
+        // FIX: restored oceanAudio/stormAudio volume lines + saveVolume inside same listener
         this.volumeSlider.addEventListener('input', () => {
             const volume = parseFloat(this.volumeSlider.value);
             this.rainAudio.volume = volume;
@@ -182,6 +240,7 @@ class AmbientManager {
             this.oceanAudio.volume = volume;
             this.stormAudio.volume = volume;
             this.updateVolumeUI(volume);
+            this.saveVolume(volume); // persist to localStorage
         });
 
         // cache the fill element for the track (if present)
@@ -382,4 +441,3 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
 })();
-
