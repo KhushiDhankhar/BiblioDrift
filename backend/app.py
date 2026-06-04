@@ -1317,6 +1317,7 @@ def add_to_library(validated_data):
     
     try:
         
+        current_user_id = get_jwt_identity()
         if str(validated_data.user_id) != str(current_user_id):
             return unauthorized_access_error("Cannot access another user's library")
         
@@ -1494,6 +1495,7 @@ def update_library_item(item_id, validated_data):
         if not item:
             return not_found_error("Library item")
             
+        current_user_id = get_jwt_identity()
         if str(item.user_id) != str(current_user_id):
             return forbidden_error("Cannot modify another user's library item")
 
@@ -1540,6 +1542,7 @@ def remove_from_library(item_id):
         if not item:
             return not_found_error("Library item")
         
+        current_user_id = get_jwt_identity()
         if str(item.user_id) != str(current_user_id):
             return forbidden_error("Cannot delete another user's library item")
             
@@ -2092,6 +2095,7 @@ def verify_auth_session():
 def set_reading_goal(validated_data):
     """Set or update annual reading goal."""
     
+    current_user_id = get_jwt_identity()
     if str(validated_data.user_id) != str(current_user_id):
         return forbidden_error("Unauthorized")
     
@@ -2210,6 +2214,7 @@ def get_leaderboard():
 def create_collection(validated_data):
     """Create a new collection."""
     
+    current_user_id = get_jwt_identity()
     if str(validated_data.user_id) != str(current_user_id):
         return forbidden_error("Unauthorized")
     
@@ -2283,6 +2288,7 @@ def update_collection(collection_id, validated_data):
         if not collection:
             return jsonify({"error": "Collection not found"}), 404
         
+        current_user_id = get_jwt_identity()
         if str(collection.user_id) != str(current_user_id):
             return forbidden_error("Unauthorized")
         
@@ -2320,6 +2326,7 @@ def delete_collection(collection_id):
         if not collection:
             return jsonify({"error": "Collection not found"}), 404
         
+        current_user_id = get_jwt_identity()
         if str(collection.user_id) != str(current_user_id):
             return forbidden_error("Unauthorized")
         
@@ -2332,7 +2339,8 @@ def delete_collection(collection_id):
 
 @app.route('/api/v1/collections/<int:collection_id>/books', methods=['POST'])
 @jwt_required()
-def add_book_to_collection(collection_id):
+@validate_schema(AddToCollectionRequest)
+def add_book_to_collection(collection_id, validated_data):
     """Add a book to a collection."""
     
     try:
@@ -2340,6 +2348,7 @@ def add_book_to_collection(collection_id):
         if not collection:
             return jsonify({"error": "Collection not found"}), 404
         
+        current_user_id = get_jwt_identity()
         if str(collection.user_id) != str(current_user_id):
             return forbidden_error("Unauthorized")
         
@@ -2399,6 +2408,7 @@ def remove_book_from_collection(collection_id, book_id):
         if not collection:
             return jsonify({"error": "Collection not found"}), 404
         
+        current_user_id = get_jwt_identity()
         if str(collection.user_id) != str(current_user_id):
             return forbidden_error("Unauthorized")
         
@@ -2575,6 +2585,7 @@ def create_price_alert(book_id):
     if not is_valid:
         return jsonify(validated_data), 400
     
+    current_user_id = get_jwt_identity()
     if str(validated_data.user_id) != str(current_user_id):
         return forbidden_error("Unauthorized access to another user's alerts")
     
@@ -2738,4 +2749,4 @@ if __name__ == '__main__':
         logger.info("  POST /api/v1/chat - Chat with bookseller (DEPRECATED - Use WebSockets)")
         logger.info("  GET  /api/v1/health - Health check")
 
-    socketio.run(app, debug=server_config.debug, port=server_config.port, host=server_config.host)
+    socketio.run(app, debug=app_config.debug, port=app_config.port, host=app_config.host)
